@@ -135,7 +135,7 @@ def clamp_spd_x10(spd_x10: int) -> int:
 # E22-400T30D-V2 config sozlesmesi (UKS e22_regs.h / AKS E22Regs.h)
 # ===========================================================================
 
-E22_REG0 = 0x61
+E22_REG0 = 0x62  # LINK-2K4: 2.4 kbps (AKS E22Regs.h / UKS e22_regs.h)
 E22_REG1 = 0x00
 E22_REG2 = 0x17
 E22_REG3 = 0x00
@@ -148,6 +148,15 @@ E22_NETID = 0x00
 # test_e22_register_targets_match_across_repos).
 E22_CRYPT_H = 0x5A
 E22_CRYPT_L = 0x3C
+
+# LINK-2K4: UKS'e ozgu YEREL REG3 bayraklari (bit7 = paket sonuna RSSI byte'i).
+# Havadaki paketi degistirmez, yalniz UKS alicisini etkiler; AKS bit7=0 kalir
+# (AKS'in heartbeat RX'i RSSI byte'ini "bilinmeyen" sayardi). UKS e22_regs.h
+# E22_UKS_REG3_LOCAL_FLAGS ile ayni olmali.
+E22_UKS_REG3_LOCAL_FLAGS = 0x80
+# E22 RSSI byte -> dBm: dBm = raw - 256 (UKS telemetry.c Telemetry_RssiRawToDbm)
+def rssi_raw_to_dbm(raw: int) -> int:
+    return raw - 256
 
 # Config modu pin seviyeleri (M0=0, M1=1 — E32'den farkli)
 E22_MODE_CONFIG_M0 = 0
@@ -170,10 +179,11 @@ REMOVED_COMMAND_BYTES = [0xA1, 0xA2, 0xA3, 0xA4]
 # P6 offline buffer / replay sabitleri (AKS include/SystemConfig.h)
 # ===========================================================================
 
-LORA_TX_PERIOD_MS = 1000         # 1 Hz telemetry uplink tick periyodu (1.2 kbps hava hizi kalibrasyonu — bkz. SystemConfig.h)
+LORA_TX_PERIOD_MS = 1000         # 1 Hz telemetry uplink tick periyodu (2.4 kbps hava hizi, LINK-2K4 — bkz. SystemConfig.h)
 OFFLINE_SAMPLE_PERIOD_MS = 1000  # kesinti sirasi buffer ornekleme periyodu (1 Hz)
 OB_CAPACITY = 600                # offline buffer kapasitesi (600 kayit @ 1 Hz = 10 dk, 5 km parkurda tam tur kapsama)
 REPLAY_BURST_PER_TICK = 1        # link-up sonrasi tik basina en fazla replay
+REPLAY_EVERY_N_TICKS = 2         # LINK-2K4: replay yalniz her N'inci link-UP tikinde (hava butcesi)
 BOOT_LINK_GRACE_MS = 5000        # boot'tan itibaren ilk heartbeat icin tanina sure
 LINK_TIMEOUT_MS = 9000           # yarim-dubleks kanal tikanikligi nedeniyle ~5-6 sn'lik fiili heartbeat araligina marj (bkz. SystemConfig.h)
 
@@ -183,6 +193,21 @@ LINK_TIMEOUT_MS = 9000           # yarim-dubleks kanal tikanikligi nedeniyle ~5-
 # LoRa_Link_Analysis.md "UKS-side TEL Timeout Margin" (nominal 3x marj,
 # 2 ardisik atlanmis TX tik'i tolere edilir, 3.'sunde false LINK,DOWN).
 TEL_LINK_TIMEOUT_MS = 3000
+
+# LINK-2K4: UKS heartbeat zamanlamasi (UKS Core/Inc/lora.h). Senkron mod:
+# TEL frame'inden sonra hat LORA_HEARTBEAT_QUIET_MS sessizse, en sik
+# LORA_HEARTBEAT_PERIOD_MS'te bir. Yedek: LORA_HEARTBEAT_FALLBACK_MS'te bir.
+# Invaryant: AKS LINK_TIMEOUT_MS >= 3 x LORA_HEARTBEAT_FALLBACK_MS.
+LORA_HEARTBEAT_PERIOD_MS = 2000
+LORA_HEARTBEAT_QUIET_MS = 100
+LORA_HEARTBEAT_FALLBACK_MS = 3000
+
+# LINK-REINIT: link bu kadar suredir DOWN ise HER IKI taraf da E22'yi yeniden
+# ayarlar (register oku/gerekirse yaz + CRYPT C2/RAM). CRYPT yalniz RAM'de
+# tutuldugu icin E22 besleme kesintisinde kaybolur. UKS lora.h ve AKS
+# SystemConfig.h ile AYNI olmali.
+LORA_REINIT_AFTER_DOWN_MS = 15000
+LORA_REINIT_RETRY_MS = 30000
 
 
 def build_tel_line(f: dict) -> str:

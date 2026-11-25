@@ -563,3 +563,94 @@ def test_aks_loop_sim_post_live_ms_is_derived_from_contract(aks_root):
         "kullanacak sekilde genisletildiyse bu test'i de o sabitleri "
         "kontrol edecek sekilde guncelleyin"
     )
+
+
+# ===========================================================================
+# LINK-2K4 — 2.4 kbps, seyreltilmis replay, senkron heartbeat, RSSI (LQ)
+# ===========================================================================
+
+def test_aks_replay_every_n_ticks_matches_contract(aks_root):
+    sys_config = read(aks_root / "include/SystemConfig.h")
+    assert extract_define_int(
+        sys_config, "REPLAY_EVERY_N_TICKS", source="AKS SystemConfig.h"
+    ) == contract.REPLAY_EVERY_N_TICKS
+
+
+def test_uks_rssi_local_reg3_flag_matches_contract(uks_telemetry_dir):
+    """UKS yalniz KENDI modulunde REG3 bit7'yi (RSSI byte) acar; ortak
+    E22_VAL_REG3 AKS ile ayni kalir (test_e22_register_targets_match_across_repos)."""
+    regs = read(uks_telemetry_dir / "Core/Inc/e22_regs.h")
+    assert extract_define_int(
+        regs, "E22_REG3_RSSI_BYTE_EN", source="UKS e22_regs.h"
+    ) == contract.E22_UKS_REG3_LOCAL_FLAGS
+    assert re.search(
+        r"#define\s+E22_UKS_REG3_LOCAL_FLAGS\s+E22_REG3_RSSI_BYTE_EN", regs
+    ), "UKS E22_UKS_REG3_LOCAL_FLAGS RSSI bayragini icermiyor"
+    # Modul blogunda ortak deger degil, yerel bayrakli deger yazilmali.
+    blocks = re.findall(r"#define\s+E22_(?:TARGET|WRITE)_BLOCK_INIT[^}]*\}", regs)
+    assert len(blocks) == 2 and all("E22_UKS_VAL_REG3" in b for b in blocks), (
+        "UKS register bloklari E22_UKS_VAL_REG3 kullanmiyor — RSSI byte'i acilmaz"
+    )
+
+
+def test_uks_heartbeat_timing_matches_contract(uks_telemetry_dir):
+    lora_h = read(uks_telemetry_dir / "Core/Inc/lora.h")
+    for name in ("LORA_HEARTBEAT_PERIOD_MS", "LORA_HEARTBEAT_QUIET_MS",
+                 "LORA_HEARTBEAT_FALLBACK_MS"):
+        assert extract_define_int(lora_h, name, source="UKS lora.h") == getattr(contract, name), name
+
+
+def test_aks_link_timeout_covers_uks_heartbeat_fallback(aks_root, uks_telemetry_dir):
+    """AKS LINK_TIMEOUT_MS >= 3 x UKS LORA_HEARTBEAT_FALLBACK_MS: hic frame
+    alinmasa bile (yedek zamanlayici) art arda 2 heartbeat kaybi tolere edilir."""
+    sys_config = read(aks_root / "include/SystemConfig.h")
+    lora_h = read(uks_telemetry_dir / "Core/Inc/lora.h")
+    link_to = extract_define_int(sys_config, "LINK_TIMEOUT_MS", source="AKS SystemConfig.h")
+    fb = extract_define_int(lora_h, "LORA_HEARTBEAT_FALLBACK_MS", source="UKS lora.h")
+    assert link_to >= 3 * fb, f"AKS LINK_TIMEOUT_MS={link_to} < 3 x UKS heartbeat fallback ({fb})"
+
+
+def test_air_budget_at_contract_rate(aks_root):
+    """G10-b'nin Python eslenigi: ortalama hava yuku <= %70 nominal hava hizi."""
+    rate = {0: 300, 1: 1200, 2: 2400, 3: 4800, 4: 9600, 5: 19200, 6: 38400, 7: 62500}[contract.E22_REG0 & 7]
+    sys_config = read(aks_root / "include/SystemConfig.h")
+    frame_max = extract_define_int(sys_config, "LORA_TEL_FRAME_MAX_BYTES", source="AKS SystemConfig.h")
+    frames_per_tick = 1 + contract.REPLAY_BURST_PER_TICK / contract.REPLAY_EVERY_N_TICKS
+    bps = frames_per_tick * frame_max * 8 * 1000 / contract.LORA_TX_PERIOD_MS
+    assert bps <= rate * 0.70, f"hava yuku {bps:.0f} bps > %70 x {rate} bps"
+
+
+def test_uks_lq_line_format(uks_telemetry_dir):
+    """UKS main.c 'LQ,<tick>,<rssi_dbm>,<seq|->,<frames>' satirini basar
+    (monitor link_*.csv'ye yazar). 'CSV,' ile BASLAMAMALI (juri CSV semasi).
+    frames: o RSSI'nin radyo paketindeki gecerli TEL frame sayisi."""
+    main_c = read(uks_telemetry_dir / "Core/Src/main.c")
+    assert 'printf("LQ,%lu,%d,%lu,%u\\r\\n"' in main_c
+    assert 'printf("LQ,%lu,%d,-,%u\\r\\n"' in main_c
+    assert "Telemetry_RssiFrameCount" in main_c
+    assert contract.rssi_raw_to_dbm(0xA9) == -87
+
+
+def test_link_reinit_timing_matches_on_both_sides(aks_root, uks_telemetry_dir):
+    """LINK-REINIT: iki taraf da uzun link kopmasinda E22'yi ayni zamanlamayla
+    yeniden ayarlar (CRYPT RAM'den kaybolabilir). Degerler sozlesmeyle ayni ve
+    tetik, link timeout'larindan uzun olmali (kisa kopmada config'e girilmez)."""
+    sys_config = read(aks_root / "include/SystemConfig.h")
+    lora_h = read(uks_telemetry_dir / "Core/Inc/lora.h")
+    for name in ("LORA_REINIT_AFTER_DOWN_MS", "LORA_REINIT_RETRY_MS"):
+        want = getattr(contract, name)
+        assert extract_define_int(sys_config, name, source="AKS SystemConfig.h") == want, name
+        assert extract_define_int(lora_h, name, source="UKS lora.h") == want, name
+    link_to = extract_define_int(sys_config, "LINK_TIMEOUT_MS", source="AKS SystemConfig.h")
+    assert contract.LORA_REINIT_AFTER_DOWN_MS > link_to
+    assert contract.LORA_REINIT_RETRY_MS >= contract.LORA_REINIT_AFTER_DOWN_MS
+
+    # Cagri noktalari POZITIF dogrulanir (sabit tanimli ama kullanilmiyor olmasin)
+    main_c = read(uks_telemetry_dir / "Core/Src/main.c")
+    assert re.search(r"LORA_REINIT_AFTER_DOWN_MS", main_c)
+    assert re.search(r"Lora_Init\s*\(\s*&lora_ctx", strip_c_comments(main_c).split("while (1)", 1)[1]), \
+        "UKS ana dongusunde E22 yeniden ayarlama (Lora_Init) cagrisi yok"
+    main_cpp = read(aks_root / "src/main.cpp")
+    assert re.search(r"LORA_REINIT_AFTER_DOWN_MS", main_cpp)
+    assert len(re.findall(r"configureE22\s*\(", strip_c_comments(main_cpp))) >= 2, \
+        "AKS LoRa gorevinde link-DOWN yeniden ayarlama (configureE22) cagrisi yok"

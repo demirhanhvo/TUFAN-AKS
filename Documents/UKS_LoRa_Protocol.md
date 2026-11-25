@@ -12,7 +12,19 @@ This document defines the current command and telemetry contract between the UKS
 - UART mode: transparent mode
 - Selected startup mode: `M0 = 0`, `M1 = 0`
 - UART baud: `9600`
-- Air data rate: `1.2 kbps` (`REG0` bit[2:0] = `001`, `REG0 = 0x61`)
+- Air data rate: `2.4 kbps` (`REG0` bit[2:0] = `010`, `REG0 = 0x62`) — LINK-2K4, AKS ve UKS aynı commit setinde.
+- UKS alıcısı kendi modülünde `REG3` bit7'yi (RSSI byte) açar (`E22_UKS_REG3_LOCAL_FLAGS`); AKS'te kapalıdır.
+  UKS her paketin RSSI'ını PC'ye `LQ,<uks_tick_ms>,<rssi_dbm>,<seq|->,<frames>` satırıyla iletir; Monitor bunu jüri
+  CSV'sine değil `link_*.csv` teşhis dosyasına yazar. `frames` = o radyo paketindeki geçerli TEL frame sayısı
+  (E22 replay+canlıyı tek pakette birleştirebilir; `frames`=2 iken seq'in 2 atlaması kayıp değildir).
+- Canlı TX tikte AUX meşgulse (replay drenajı) canlı paket bir sonraki tiki beklemeden görev döngüsünde
+  (10 ms) yeniden denenir (`UplinkScheduler::retryPendingLive`) — eskiden art arda tik kaçıp UKS'te 3.2 s
+  boşluk / sahte `LINK,DOWN` oluşuyordu (bench 2026-11-25).
+- Link `LORA_REINIT_AFTER_DOWN_MS` (15 s) DOWN kalırsa iki taraf da E22'yi yeniden ayarlar (CRYPT C2/RAM
+  olduğundan E22 besleme kesintisinde kaybolur); DOWN sürdükçe `LORA_REINIT_RETRY_MS` (30 s) aralıkla.
+- Replay yalnız her `REPLAY_EVERY_N_TICKS` (=2) link-UP tikinde yapılır (hava bütçesi, `SystemConfig.h` G10-b).
+- UKS 0xB0 heartbeat'i: TEL frame'inden sonra hat `LORA_HEARTBEAT_QUIET_MS` (100 ms) sessizse, en sık 2 s'de bir;
+  frame yoksa 3 s'de bir yedek zamanlayıcı (`LORA_HEARTBEAT_FALLBACK_MS`). AKS `LINK_TIMEOUT_MS` = 9000 ≥ 3×3000.
 - Frequency: `433.125 MHz` (channel `23`, `REG2 = 0x17`, base offset `410.125 MHz`)
 - Telemetry transmit period: `500 ms` (`2 Hz`) — lowered from `200 ms` (`5 Hz`) to fix link flapping: on a single-frequency half-duplex E22 channel, continuous 5 Hz AKS TX left little room for UKS's 1 Hz `0xB0` heartbeat to get through (field logs showed ~5-6 s effective heartbeat interval, shorter than the previous `LINK_TIMEOUT_MS`, causing constant DOWN→UP flapping)
 - No application-layer ACK or retransmission is implemented in AKS at this stage.

@@ -45,9 +45,13 @@ class UplinkScheduler {
         uint32_t lastTs = 0;      // kesinti son örnek ts_ms
     };
 
+    // replayEveryNTicks (LINK-2K4): replay yalnız her N'inci link-UP TX
+    // tik'inde yapılır (1 = her tikte, eski davranış). Bkz. SystemConfig.h
+    // REPLAY_EVERY_N_TICKS.
     UplinkScheduler(uint32_t linkTimeoutMs, uint32_t bootGraceMs,
                     uint32_t offlineSamplePeriodMs, uint8_t replayBurstPerTick,
-                    uint32_t unknownByteWarnIntervalMs);
+                    uint32_t unknownByteWarnIntervalMs,
+                    uint8_t replayEveryNTicks = 1);
 
     // --- RX olayları ---
     RxResult onRxByte(uint8_t rxByte, uint64_t nowMs);
@@ -72,6 +76,18 @@ class UplinkScheduler {
     int onTxTickLinkUp(bool haveLive, const TelemetryData& live, SendFn send,
                        void* ctx);
 
+    // --- LIVE-RETRY: tikte AUX meşgul olduğu için atlanan CANLI paket ---
+    // Eskiden atlanan canlı bir sonraki tike (1 s sonra) kalıyordu; replay
+    // drenajında (replay+canlı tek E22 paketi ≈0.9 s hava) bir sonraki tikte
+    // AUX yine meşgul olabildiğinden art arda tikler kaçıyor ve UKS'te 3.2 s
+    // boşluk → sahte LINK,DOWN görülüyordu (bench 2026-11-25). Görev döngüsü
+    // (10 ms) bu fonksiyonu çağırır: bekleyen canlı varsa taze veriyle tekrar
+    // dener. Bekleme bir sonraki tikte sıfırlanır (yeni canlı onun yerine geçer).
+    // Döner: bu çağrıda canlı paket gönderildi mi.
+    bool hasPendingLive() const { return m_livePending; }
+    bool retryPendingLive(bool haveLive, const TelemetryData& live, SendFn send,
+                          void* ctx);
+
    private:
     // Config (ctor'dan)
     uint32_t m_linkTimeoutMs;
@@ -79,6 +95,9 @@ class UplinkScheduler {
     uint32_t m_offlineSamplePeriodMs;
     uint8_t m_replayBurstPerTick;
     uint32_t m_unknownByteWarnIntervalMs;
+    uint8_t m_replayEveryNTicks;
+    uint8_t m_replayTickPhase = 0;  // 0 -> bu tik replay tik'i
+    bool m_livePending = false;     // LIVE-RETRY: bu tikte canlı gönderilemedi
 
     // Taşınan statikler (M1'de yer değişti). R2: task-arası paylaşılan ikisi
     // std::atomic yapıldı — 32-bit Xtensa'da 64-bit volatile okuma ATOMİK

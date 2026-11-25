@@ -104,6 +104,46 @@ void test_boot_grace_link_down_when_no_heartbeat(void) {
 // ---------------------------------------------------------------------------
 // onTxTickLinkUp: AUX meşgulse (send false) replay düşürülmez, canlı atlanır.
 // ---------------------------------------------------------------------------
+// LIVE-RETRY: tikte AUX meşgul → canlı bekler; retry taze veriyle gönderir,
+// yalnız bir kez; yeni tik bekleyen durumu sıfırlar.
+void test_live_retry_after_aux_busy(void) {
+    resetEnv();
+    UplinkScheduler s = makeScheduler();
+
+    g_sendAlwaysOk = false;  // tikte AUX meşgul
+    TEST_ASSERT_EQUAL_INT(0, s.onTxTickLinkUp(true, mkPacket(100), &recordSend, nullptr));
+    TEST_ASSERT_TRUE(s.hasPendingLive());
+
+    // AUX hâlâ meşgul: retry başarısız, bekleme sürer
+    TEST_ASSERT_FALSE(s.retryPendingLive(true, mkPacket(101), &recordSend, nullptr));
+    TEST_ASSERT_TRUE(s.hasPendingLive());
+
+    g_sendAlwaysOk = true;  // AUX boşaldı → taze canlı gider
+    TEST_ASSERT_TRUE(s.retryPendingLive(true, mkPacket(102), &recordSend, nullptr));
+    TEST_ASSERT_FALSE(s.hasPendingLive());
+    TEST_ASSERT_EQUAL_INT(1, g_emittedCount);
+    TEST_ASSERT_FALSE(g_emitted[0].isReplay);
+    TEST_ASSERT_EQUAL_UINT32(102u, g_emitted[0].ts);
+
+    // Bekleyen yokken retry hiçbir şey göndermez (çift canlı yok)
+    TEST_ASSERT_FALSE(s.retryPendingLive(true, mkPacket(103), &recordSend, nullptr));
+    TEST_ASSERT_EQUAL_INT(1, g_emittedCount);
+}
+
+void test_live_retry_cleared_by_next_tick(void) {
+    resetEnv();
+    UplinkScheduler s = makeScheduler();
+    g_sendAlwaysOk = false;
+    (void)s.onTxTickLinkUp(true, mkPacket(200), &recordSend, nullptr);
+    TEST_ASSERT_TRUE(s.hasPendingLive());
+    g_sendAlwaysOk = true;
+    TEST_ASSERT_EQUAL_INT(1, s.onTxTickLinkUp(true, mkPacket(300), &recordSend, nullptr));
+    TEST_ASSERT_FALSE(s.hasPendingLive());  // yeni tikin canlısı gitti
+    TEST_ASSERT_FALSE(s.retryPendingLive(true, mkPacket(301), &recordSend, nullptr));
+    TEST_ASSERT_EQUAL_INT(1, g_emittedCount);
+    TEST_ASSERT_EQUAL_UINT32(300u, g_emitted[0].ts);
+}
+
 void test_tx_tick_aux_busy_keeps_buffer(void) {
     resetEnv();
     UplinkScheduler s = makeScheduler();
@@ -201,4 +241,55 @@ void test_outage_offline_sampling_then_replay_drain(void) {
     }
 
     TEST_ASSERT_EQUAL_INT(0, ob_count());
+}
+
+// ---------------------------------------------------------------------------
+// LINK-2K4: replayEveryNTicks — replay yalnız her N'inci link-UP tikinde,
+// aradaki tiklerde YALNIZ canlı (hava bütçesi, bkz. SystemConfig.h
+// REPLAY_EVERY_N_TICKS / G10-b).
+// ---------------------------------------------------------------------------
+void test_replay_every_n_ticks_alternates(void) {
+    resetEnv();
+    UplinkScheduler s(LINK_TIMEOUT_MS, BOOT_LINK_GRACE_MS,
+                      OFFLINE_SAMPLE_PERIOD_MS, REPLAY_BURST_PER_TICK,
+                      LORA_UNKNOWN_BYTE_WARN_INTERVAL_MS, /*replayEveryNTicks=*/2);
+    ob_push(mkPacket(10));
+    ob_push(mkPacket(20));
+
+    // Tik 1: replay tik'i → 1 replay + 1 canlı
+    TEST_ASSERT_EQUAL_INT(REPLAY_BURST_PER_TICK + 1,
+                          s.onTxTickLinkUp(true, mkPacket(901), &recordSend, nullptr));
+    // Tik 2: yalnız canlı, tampon dokunulmaz
+    TEST_ASSERT_EQUAL_INT(1, s.onTxTickLinkUp(true, mkPacket(902), &recordSend, nullptr));
+    TEST_ASSERT_EQUAL_INT(1, ob_count());
+    // Tik 3: tekrar replay
+    TEST_ASSERT_EQUAL_INT(REPLAY_BURST_PER_TICK + 1,
+                          s.onTxTickLinkUp(true, mkPacket(903), &recordSend, nullptr));
+    TEST_ASSERT_EQUAL_INT(0, ob_count());
+
+    TEST_ASSERT_EQUAL_INT(5, g_emittedCount);
+    TEST_ASSERT_TRUE(g_emitted[0].isReplay);
+    TEST_ASSERT_EQUAL_UINT32(10u, g_emitted[0].ts);
+    TEST_ASSERT_FALSE(g_emitted[1].isReplay);
+    TEST_ASSERT_FALSE(g_emitted[2].isReplay);   // tik 2: yalnız canlı
+    TEST_ASSERT_EQUAL_UINT32(902u, g_emitted[2].ts);
+    TEST_ASSERT_TRUE(g_emitted[3].isReplay);
+    TEST_ASSERT_EQUAL_UINT32(20u, g_emitted[3].ts);
+}
+
+void test_replay_every_n_ticks_zero_treated_as_one(void) {
+    resetEnv();
+    UplinkScheduler s(LINK_TIMEOUT_MS, BOOT_LINK_GRACE_MS,
+                      OFFLINE_SAMPLE_PERIOD_MS, REPLAY_BURST_PER_TICK,
+                      LORA_UNKNOWN_BYTE_WARN_INTERVAL_MS, /*replayEveryNTicks=*/0);
+    ob_push(mkPacket(10));
+    ob_push(mkPacket(20));
+    TEST_ASSERT_EQUAL_INT(2, s.onTxTickLinkUp(true, mkPacket(1), &recordSend, nullptr));
+    TEST_ASSERT_EQUAL_INT(2, s.onTxTickLinkUp(true, mkPacket(2), &recordSend, nullptr));
+    TEST_ASSERT_EQUAL_INT(0, ob_count());
+}
+
+void test_firmware_config_replay_divider_is_contract_value(void) {
+    // SystemConfig.h ↔ tools/e2e/contract.py REPLAY_EVERY_N_TICKS
+    TEST_ASSERT_EQUAL_INT(2, REPLAY_EVERY_N_TICKS);
 }

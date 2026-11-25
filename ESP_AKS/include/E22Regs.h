@@ -53,9 +53,21 @@
 #define E22_CFG_ADDH    0x00U  // adres 0x0000: hedefli değil, genel yayın
 #define E22_CFG_ADDL    0x00U
 #define E22_CFG_NETID   0x00U
-// REG0 = 0110 0001: bit[7:5]=011 UART 9600 | bit[4:3]=00 8N1 | bit[2:0]=001 hava hızı 1.2 kbps
-// (haberlesme menzilini maksimuma cikarmak amaciyla 1.2 kbps'ye dusuruldu)
-#define E22_CFG_REG0    0x61U
+// REG0 = 0110 0010: bit[7:5]=011 UART 9600 | bit[4:3]=00 8N1 | bit[2:0]=010 hava hızı 2.4 kbps
+// LINK-2K4 (2026-11): yarış günü (4b469fb) AKS 1.2 kbps'e (0x61) çekilmiş ama
+// UKS 4.8 kbps'te (0x63) kalmıştı — iki taraf AYNI hızda değildi. 1.2 kbps'te
+// ~107 B TEL satırı ~0.75-0.9 s havada kalıyor, 1 Hz'de kanal %75-90 doluyor,
+// replay (canlı + 1) ile kanal kapasitesi AŞILIYORDU. 2.4 kbps: 4.8'e göre
+// ~+3 dB hassasiyet, 1 Hz'de kanal ~%45. UKS e22_regs.h ile AYNI commit setinde.
+#define E22_CFG_REG0    0x62U
+// REG0 bit[2:0] -> nominal hava hızı (bps). Link bütçesi static_assert'ı
+// (SystemConfig.h G10-b) kullanır.
+#define E22_AIR_RATE_BPS_FROM_REG0(r) \
+    ((((r) & 0x07U) == 0U) ? 300U   : (((r) & 0x07U) == 1U) ? 1200U  : \
+     (((r) & 0x07U) == 2U) ? 2400U  : (((r) & 0x07U) == 3U) ? 4800U  : \
+     (((r) & 0x07U) == 4U) ? 9600U  : (((r) & 0x07U) == 5U) ? 19200U : \
+     (((r) & 0x07U) == 6U) ? 38400U : 62500U)
+#define E22_AIR_RATE_BPS E22_AIR_RATE_BPS_FROM_REG0(E22_CFG_REG0)
 // REG1 = bit[7:6]=00 alt-paket 240B | bit5=0 RSSI ortam gürültüsü kapalı | bit[1:0]=00 TX gücü EN YÜKSEK (T30D: 30 dBm)
 // DİKKAT: E22'de de 00=maks, 11=min — E32'deki OPTION karışıklığı tekrarlanmasın.
 #define E22_CFG_REG1    0x00U

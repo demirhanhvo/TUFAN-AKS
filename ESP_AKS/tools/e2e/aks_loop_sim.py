@@ -141,7 +141,7 @@ def run_outage_simulation(
     """
     if post_live_ms is None:
         max_buffered = outage_ms // contract.OFFLINE_SAMPLE_PERIOD_MS
-        ticks_needed = math.ceil(max_buffered / contract.REPLAY_BURST_PER_TICK)
+        ticks_needed = math.ceil(max_buffered / contract.REPLAY_BURST_PER_TICK) * contract.REPLAY_EVERY_N_TICKS
         post_live_ms = int(ticks_needed * contract.LORA_TX_PERIOD_MS * 1.5)  # %50 marj
 
     result = SimResult()
@@ -162,6 +162,7 @@ def run_outage_simulation(
     # --- Look-back halka tamponu (firmware eslenigi) ---
     lookback = _LookbackRing(contract.OFFLINE_SAMPLE_PERIOD_MS)
     link_was_down = False  # onceki tik'te link durumu
+    replay_tick_phase = 0  # UplinkScheduler::m_replayTickPhase eslenigi (LINK-2K4)
 
     # Link-down tespit anini firmware ile ayni sekilde hesapla:
     # link DOWN'a gecis, outage_start_ms + LINK_TIMEOUT_MS aninda olur.
@@ -192,7 +193,10 @@ def run_outage_simulation(
 
         if not link_down:
             # --- NORMAL MOD: throttled replay + canli paket (S1) ---
-            for _ in range(contract.REPLAY_BURST_PER_TICK):
+            # LINK-2K4: replay yalniz her REPLAY_EVERY_N_TICKS'inci tikte.
+            replay_tick = replay_tick_phase == 0
+            replay_tick_phase = (replay_tick_phase + 1) % contract.REPLAY_EVERY_N_TICKS
+            for _ in range(contract.REPLAY_BURST_PER_TICK if replay_tick else 0):
                 buffered = buffer.peek()
                 if buffered is None:
                     break

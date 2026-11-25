@@ -3,12 +3,14 @@
 UplinkScheduler::UplinkScheduler(uint32_t linkTimeoutMs, uint32_t bootGraceMs,
                                  uint32_t offlineSamplePeriodMs,
                                  uint8_t replayBurstPerTick,
-                                 uint32_t unknownByteWarnIntervalMs)
+                                 uint32_t unknownByteWarnIntervalMs,
+                                 uint8_t replayEveryNTicks)
     : m_linkTimeoutMs(linkTimeoutMs),
       m_bootGraceMs(bootGraceMs),
       m_offlineSamplePeriodMs(offlineSamplePeriodMs),
       m_replayBurstPerTick(replayBurstPerTick),
-      m_unknownByteWarnIntervalMs(unknownByteWarnIntervalMs) {}
+      m_unknownByteWarnIntervalMs(unknownByteWarnIntervalMs),
+      m_replayEveryNTicks(replayEveryNTicks == 0 ? 1 : replayEveryNTicks) {}
 
 UplinkScheduler::RxResult UplinkScheduler::onRxByte(uint8_t rxByte,
                                                     uint64_t nowMs) {
@@ -109,10 +111,17 @@ int UplinkScheduler::onTxTickLinkUp(bool haveLive, const TelemetryData& live,
                                     SendFn send, void* ctx) {
     int sent = 0;
 
+    // LINK-2K4: replay yalnız her m_replayEveryNTicks'inci tikte (hava
+    // bütçesi, bkz. SystemConfig.h REPLAY_EVERY_N_TICKS). İlk tik replay
+    // tik'idir; faz yalnız link-UP tiklerinde ilerler.
+    const bool replayTick = (m_replayTickPhase == 0);
+    m_replayTickPhase =
+        static_cast<uint8_t>((m_replayTickPhase + 1u) % m_replayEveryNTicks);
+
     // Throttled replay: seq yalnızca gerçek TX anında ilerler (Telemetry
     // içinde) — peek/drop_front sırayı bozmaz. AUX meşgulse paket tamponda
     // KALIR (send FALSE döner → break, düşürülmez).
-    for (uint8_t b = 0; b < m_replayBurstPerTick; b++) {
+    for (uint8_t b = 0; replayTick && b < m_replayBurstPerTick; b++) {
         TelemetryData replay = {};
         if (!ob_peek(replay))
             break;  // tampon boş
@@ -122,11 +131,22 @@ int UplinkScheduler::onTxTickLinkUp(bool haveLive, const TelemetryData& live,
         sent++;
     }
 
+    m_livePending = false;
     if (haveLive) {
         if (send(live, /*isReplay=*/false, ctx))
             sent++;
-        // AUX meşgulse canlı paket atlanır (offline değil, link UP — sıradaki
-        // tik'te taze canlı okuma denenir).
+        else
+            m_livePending = true;  // LIVE-RETRY: görev döngüsü tekrar dener
     }
     return sent;
+}
+
+bool UplinkScheduler::retryPendingLive(bool haveLive, const TelemetryData& live,
+                                       SendFn send, void* ctx) {
+    if (!m_livePending || !haveLive)
+        return false;
+    if (!send(live, /*isReplay=*/false, ctx))
+        return false;  // AUX hâlâ meşgul — sonraki döngüde tekrar
+    m_livePending = false;
+    return true;
 }

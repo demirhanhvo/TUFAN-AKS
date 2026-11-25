@@ -285,12 +285,11 @@ static_assert((unsigned)HMI_RESYNC_CMD_MAX_BYTES * 1000u /
 #define LORA_M0_PIN GPIO_NUM_25   // Şemadaki MO (IO25)
 #define LORA_M1_PIN GPIO_NUM_26   // Şemadaki M1 (IO26)
 #define LORA_UART_BAUD 9600       // MCU↔E22 yerel seri hız (config modunda da aynı)
-// 2 Hz telemetry uplink (1 Hz'den geri döndürüldü — parkur keşfinde
-// maksimum mesafe 500 m ölçüldü, 2.4 kbps hava hızı bu mesafe için aşırı
-// tedbirdi; hava hızı 4.8 kbps'e çıkarıldı, ekip onaylı kalibrasyon).
-// Gerekçe: ~90 byte'lık bir TEL paketi 4.8 kbps'te ~190 ms havada kalır;
-// 500 ms'lik periyotta canlı doluluk ~%38 — UKS'in 1 Hz 0xB0 heartbeat'inin
-// kanala girebileceği pencere yeterli kalır.
+// 1 Hz telemetry uplink, 2.4 kbps hava hızı (LINK-2K4, bkz. E22Regs.h REG0).
+// Gerekçe: ~107 B'lık bir TEL satırı 2.4 kbps'te ~0.4-0.45 s havada kalır;
+// 1000 ms'lik periyotta canlı doluluk ~%45 — UKS'in 0xB0 heartbeat'i TEL
+// paketinin hemen arkasındaki boş pencereye senkron gönderilir (UKS lora.h
+// LORA_HEARTBEAT_QUIET_MS). UKS TEL_LINK_TIMEOUT_MS=3000 (3x).
 #define LORA_TX_PERIOD_MS 1000
 #define LORA_RX_TIMEOUT_MS 20
 
@@ -620,6 +619,26 @@ static_assert((RELAY_INVERT_MASK & ~((1u << RELAY_TOTAL_CHANNELS) - 1u)) == 0,
 // buffered (replay) paket gonderilir; canli paket akisi hic kesilmeden
 // (1 canli + en fazla bu kadar replay / tik) buffer bosaltilir (S1).
 #define REPLAY_BURST_PER_TICK  1
+// LINK-2K4: replay yalnız her REPLAY_EVERY_N_TICKS'inci TX tik'inde yapılır
+// (diğer tiklerde yalnız canlı). 2.4 kbps'te canlı + replay aynı tikte
+// ~0.85 s hava süresi demek — kanal neredeyse tamamen dolar, UKS heartbeat'i
+// giremez, link DOWN↔UP döngüsüne girer. 2 ile ortalama hava yükü
+// (1 + 1/2) frame/s'ye iner ve her ikinci tikte heartbeat penceresi kalır.
+// Bedel: 60 sn kesintinin replay'i ~60 sn yerine ~120 sn sürer (9.2.h
+// kayıt aralığı kuralını etkilemez — replay paketleri kendi ts_ms'ini taşır).
+#define REPLAY_EVERY_N_TICKS   2
+
+// LINK-REINIT: link bu kadar süredir DOWN ise E22 yeniden ayarlanır
+// (LoraLink::configureE22: register oku/gerekirse yaz + CRYPT'i C2/RAM ile
+// tekrar yaz). Neden: CRYPT yalnız RAM'e yazılır (flash ömrü) — E22'nin
+// beslemesi bir an gidip gelirse anahtar sessizce kaybolur; ayrıca boot'ta
+// E22 henüz hazır değilse (AUX timeout) config hiç yapılmaz ve eskiden
+// reboot'a kadar yeniden denenmezdi (bench 2026-11-25). Link DOWN kaldıkça
+// her LORA_REINIT_RETRY_MS'de bir tekrarlanır; read-before-write sayesinde
+// flash'a yalnız fark varsa yazılır. UKS ile AYNI değerler
+// (UKS lora.h, tools/e2e/contract.py).
+#define LORA_REINIT_AFTER_DOWN_MS 15000U
+#define LORA_REINIT_RETRY_MS      30000U
 
 // --- G10: LoRa Link Bütçesi (frame boyutu × oran ≤ UART kapasitesi) ---
 // Tek TX tikinde (her LORA_TX_PERIOD_MS) en fazla (1 canlı + REPLAY_BURST_PER_TICK
@@ -646,6 +665,27 @@ static_assert(
     "LORA_TEL_FRAME_MAX_BYTES uclusu UART kapasitesini (baud/10 x 0.8) asiyor. "
     "Frame boyutu/baud DEGISTIRME (UKS sozlesmesi); periyodu artir veya replay "
     "oranini dusur.");
+#endif
+// --- G10-b: LoRa HAVA bütçesi (LINK-2K4) ---
+// G10 yalnız MCU↔E22 UART'ını denetler; asıl darboğaz E22 hava hızıdır
+// (1.2 kbps + replay kombinasyonu bu kontrolden geçip kanalı taşırıyordu).
+// Ortalama havaya çıkan bit/sn:
+//     (1 + REPLAY_BURST_PER_TICK / REPLAY_EVERY_N_TICKS) × FRAME_MAX × 8
+//         × 1000 / LORA_TX_PERIOD_MS
+// KURAL: ≤ E22_AIR_RATE_BPS × %70. %30 pay: LoRa preamble/başlık/CRC ek
+// yükü (nominal hız payload hızıdır) + UKS heartbeat penceresi. Bu kaba bir
+// tahmindir, kesin hava süresi değildir — amacı bariz aşımları derlemede
+// yakalamaktır.
+#ifdef __cplusplus
+static_assert(REPLAY_EVERY_N_TICKS >= 1, "REPLAY_EVERY_N_TICKS >= 1 olmali");
+static_assert(
+    ((unsigned)REPLAY_EVERY_N_TICKS + (unsigned)REPLAY_BURST_PER_TICK) *
+            (unsigned)LORA_TEL_FRAME_MAX_BYTES * 8u * 1000u /
+            ((unsigned)REPLAY_EVERY_N_TICKS * (unsigned)LORA_TX_PERIOD_MS)
+        <= (unsigned)E22_AIR_RATE_BPS * 70u / 100u,
+    "G10-b: LoRa HAVA butcesi asildi — hava hizi (E22Regs.h REG0) bu TX "
+    "periyodu / replay orani icin yetersiz. LORA_TX_PERIOD_MS'i artir, "
+    "REPLAY_EVERY_N_TICKS'i buyut veya hava hizini yukselt.");
 #endif
 
 // --- G11: LoRa UART init retry emniyeti ---

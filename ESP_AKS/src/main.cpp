@@ -790,7 +790,8 @@ void vTask_LoRa_UKS(void *pvParameters) {
   // eskisiyle birebir, taşınan statikler (s_linkDown vb.) artık içinde.
   UplinkScheduler LO_sched(LINK_TIMEOUT_MS, BOOT_LINK_GRACE_MS,
                            OFFLINE_SAMPLE_PERIOD_MS, REPLAY_BURST_PER_TICK,
-                           LORA_UNKNOWN_BYTE_WARN_INTERVAL_MS);
+                           LORA_UNKNOWN_BYTE_WARN_INTERVAL_MS,
+                           REPLAY_EVERY_N_TICKS);
   s_uplink = &LO_sched;  // cross-task LoRa_IsLinkDown() köprüsü
 
   // Boot-grace (9.2.e / 9.4.b.vi, S3): boot'tan sonra hiç heartbeat gelmezse
@@ -803,6 +804,10 @@ void vTask_LoRa_UKS(void *pvParameters) {
   uint8_t LO_rxBuffer[4];
   uint32_t lastStackLog = 0;
   TickType_t LO_lastTelemetryTick = 0;
+
+  // LINK-REINIT (bkz. SystemConfig.h): bir sonraki E22 yeniden ayarlama anı;
+  // 0 = link UP (zamanlayıcı kapalı).
+  uint64_t LO_nextReinitMs = 0;
 
   while (true) {
     esp_task_wdt_reset();
@@ -825,7 +830,9 @@ void vTask_LoRa_UKS(void *pvParameters) {
         LO_sched.updateLink(LO_hal.nowMs(), LO_bootMs);
     if (LO_tr.becameDown) {
       ESP_LOGW("LINK", "UKS heartbeat timeout — link DOWN");
+      LO_nextReinitMs = LO_hal.nowMs() + LORA_REINIT_AFTER_DOWN_MS;
     } else if (LO_tr.becameUp) {
+      LO_nextReinitMs = 0;
       if (LO_tr.hadSamples) {
         ESP_LOGI("LINK",
                  "Heartbeat alindi — link UP: %d paket, ts araligi [%lu..%lu] "
@@ -859,6 +866,28 @@ void vTask_LoRa_UKS(void *pvParameters) {
           }
         }
       }
+    }
+
+    // LIVE-RETRY (bkz. UplinkScheduler.h): tikte AUX meşgul olduğu için
+    // atlanan canlı paketi bir sonraki tiki (1 s) beklemeden tekrar dene.
+    if (!LO_sched.isLinkDown() && LO_sched.hasPendingLive() &&
+        TEL_sensorDataQueue != nullptr) {
+      TelemetryData LO_retry = {};
+      const bool LO_haveRetry =
+          (xQueuePeek(TEL_sensorDataQueue, &LO_retry, 0) == pdTRUE);
+      LO_sched.retryPendingLive(LO_haveRetry, LO_retry, &LoRa_txSend,
+                                &LO_txCtx);
+    }
+
+    // LINK-REINIT: link uzun süredir DOWN → E22'yi yeniden ayarla (CRYPT
+    // RAM'den kaybolmuş ya da boot'ta config yapılamamış olabilir).
+    if (LO_sched.isLinkDown() && LO_nextReinitMs != 0 &&
+        LO_hal.nowMs() >= LO_nextReinitMs) {
+      ESP_LOGW("LINK", "Link uzun suredir DOWN — E22 yeniden ayarlaniyor");
+      esp_task_wdt_reset();
+      LoraLink(LO_hal).configureE22();
+      esp_task_wdt_reset();
+      LO_nextReinitMs = LO_hal.nowMs() + LORA_REINIT_RETRY_MS;
     }
 
     logStackUsage("LoRa_Task", lastStackLog);
