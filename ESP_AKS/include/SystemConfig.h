@@ -720,6 +720,29 @@ static_assert(
 #define TASK_PRIORITY_LORA  5  // telemetri uplink (CAN'in altında)
 #define TASK_PRIORITY_HMI   2  // ekran güncelleme (en düşük)
 
+// --- Wi-Fi TEST telemetri yolu (yalnız [env:esp32dev_wifi]) ---
+// LoRa'ya PARALEL, YALNIZ TEST/PİT amaçlı ikinci yol: ESP32 STA olarak bir
+// hotspot'a bağlanır, aynı 19 alanlı TEL v2 satırını MQTT (HiveMQ Cloud, TLS)
+// ile yayınlar ve `GET /telemetry.csv?since=<seq>` sunar. Yarış build'i
+// ([env:esp32dev]) bu bayrakla 0 derlenir → Wi-Fi kodu/yığını HİÇ linklenmez.
+// Ayrıntı: Documents/WIFI_TELEMETRI_TEST.md. Wi-Fi yolu hiçbir VCU/FAULT
+// kararına girmez ve LoRa yolunu değiştirmez (aynı kuyruğu yalnız peek eder).
+#ifndef WIFI_TELEMETRY_ENABLED
+#define WIFI_TELEMETRY_ENABLED 0
+#endif
+// Öncelik: HER ŞEYİN altında (HMI=2'den de düşük). Task core 1'e sabitlenir;
+// Wi-Fi sürücüsü / lwIP / MQTT task'ları da sdkconfig.esp32dev_wifi'de core
+// 1'e alındı → core 0'daki CAN/LoRa/HMI'yi preempt etmezler.
+#define TASK_PRIORITY_WIFI  1
+#define WIFI_TEL_PERIOD_MS 200U          // 5 Hz satır üretimi (LoRa 1 Hz'ten bağımsız)
+#define WIFI_TEL_RING_LINES 150U         // ~30 sn geçmiş @5 Hz (~18 KB .bss)
+#define WIFI_TEL_HTTP_DEFAULT_LINES 20U  // since verilmezse dönen son satır sayısı
+#define WIFI_TEL_RECONNECT_MS 5000U      // hotspot kopunca yeniden bağlanma aralığı
+#define WIFI_TEL_STATUS_PERIOD_MS 10000U // MQTT durum (IP/RSSI) yayın aralığı
+// Maks. TX gücü (0.25 dBm birimi; 52 = 13 dBm). Telefon hotspot'u yakında
+// olduğundan tam güç (20 dBm) gerekmez; akım tepelerini (brownout riski) azaltır.
+#define WIFI_TEL_MAX_TX_POWER_QDBM 52
+
 // --- Motor Sürücüsü Entegrasyon Bayrağı ---
 #ifndef MOTOR_DRIVER_PRESENT
 #define MOTOR_DRIVER_PRESENT 0  // Motor sürücüsü entegre edildiğinde 1 yap — READY interlock'u ve zero-torque yolu bu bayrağa bağlı.

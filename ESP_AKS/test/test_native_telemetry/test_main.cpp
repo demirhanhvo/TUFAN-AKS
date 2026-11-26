@@ -18,6 +18,10 @@ extern void test_two_packets_have_separator(void);
 // v2 yeni alanlar
 extern void test_ts_ms_is_encoded(void);
 extern void test_spd_x10_is_encoded(void);
+// Wi-Fi test yolu ortak formatlayici
+extern void test_format_frame_matches_send_status_golden(void);
+extern void test_format_frame_uses_given_seq(void);
+extern void test_format_frame_reports_truncation(void);
 // rpmToSpeedKmhX10 birim testleri
 extern void test_rpm_to_speed_zero(void);
 extern void test_rpm_to_speed_typical(void);
@@ -102,6 +106,9 @@ int main(int /*argc*/, char ** /*argv*/) {
     RUN_TEST(test_two_packets_have_separator);
     RUN_TEST(test_ts_ms_is_encoded);
     RUN_TEST(test_spd_x10_is_encoded);
+    RUN_TEST(test_format_frame_matches_send_status_golden);
+    RUN_TEST(test_format_frame_uses_given_seq);
+    RUN_TEST(test_format_frame_reports_truncation);
     RUN_TEST(test_rpm_to_speed_zero);
     RUN_TEST(test_rpm_to_speed_typical);
     RUN_TEST(test_rpm_to_speed_clamp);

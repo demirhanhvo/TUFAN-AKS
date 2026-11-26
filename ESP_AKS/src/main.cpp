@@ -27,6 +27,9 @@
 #include "TelemetrySanitize.h"
 #include "VcuLogic.h"
 #include "VehicleParams.h"
+#if WIFI_TELEMETRY_ENABLED
+#include "wifi_telemetry.h"
+#endif
 
 // 24 hücreli BMS gösterge altyapısı (Gerçek veri ile)
 #include "BmsModel.h"
@@ -1022,5 +1025,12 @@ extern "C" void app_main() {
   // LoRa stack 6144 B (increased from 3072 to prevent stack overflow crash).
   xTaskCreatePinnedToCore(vTask_LoRa_UKS, "LoRa_Task", 6144, nullptr,
                           TASK_PRIORITY_LORA, nullptr, 0);
+
+#if WIFI_TELEMETRY_ENABLED
+  // Wi-Fi TEST telemetri yolu (yalnız [env:esp32dev_wifi]): güvenlik task'ları
+  // oluşturulduktan SONRA, core 1'de en düşük öncelikte. Kuyruğu yalnız peek
+  // eder; LoRa yolunu/VCU kararlarını etkilemez. Bkz. src/wifi_telemetry.cpp.
+  WifiTelemetry_start(TEL_sensorDataQueue);
+#endif
 }
 #endif  // E22_DIAGNOSTIC_MODE

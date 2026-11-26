@@ -426,3 +426,30 @@ void test_snprintf_truncation(void) {
     TEST_ASSERT_TRUE(fake_uart_get_size() > 0);
     // Buffer taşsaydı UART'a hiç yazılmazdı.
 }
+
+// ---------------------------------------------------------------------------
+// Wi-Fi test yolu: formatFrame, sendStatus ile BİREBİR aynı satırı üretmeli
+// (verilen seq ile) ve UART'a hiçbir şey yazmamalı.
+// ---------------------------------------------------------------------------
+void test_format_frame_matches_send_status_golden(void) {
+    fake_uart_reset();
+    char buf[192];
+    const int n = Telemetry::formatFrame(makeDistinctData(), 0u, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_STRING(
+        "TEL,2,0,1500,240,5,1,0,37734,37422,32,31,2,780,-181610,6283,1,12345,1413\r\n",
+        buf);
+    TEST_ASSERT_EQUAL_INT((int)strlen(buf), n);
+    TEST_ASSERT_EQUAL_UINT32(0u, (uint32_t)fake_uart_get_size());
+}
+
+void test_format_frame_uses_given_seq(void) {
+    char buf[192];
+    Telemetry::formatFrame(makeZeroData(), 4242u, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_INT(0, strncmp(buf, "TEL,2,4242,", 11));
+}
+
+void test_format_frame_reports_truncation(void) {
+    char buf[16];
+    const int n = Telemetry::formatFrame(makeDistinctData(), 0u, buf, sizeof(buf));
+    TEST_ASSERT_TRUE(n >= (int)sizeof(buf));
+}

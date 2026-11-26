@@ -15,10 +15,12 @@ bool Telemetry::begin() {
     return true;
 }
 
-void Telemetry::sendStatus(const TelemetryData& TEL_data) {
-    if (!TEL_isInitialized)
-        return;
-
+// Saf formatlayici: sendStatus (LoRa/UART) ve Wi-Fi test yolu (src/
+// wifi_telemetry.cpp) AYNI satiri uretsin diye tek yerde. Donanima dokunmaz.
+// Donus degeri snprintf'inki gibidir: >= TEL_bufLen ise satir KESILMISTIR ve
+// cagiran taraf satiri kullanmamalidir.
+int Telemetry::formatFrame(const TelemetryData& TEL_data, uint32_t TEL_seq,
+                           char* TEL_buf, size_t TEL_bufLen) {
     // Format: TEL,ver,seq,rpm,motorVoltDeciV,motorErr,motorValid,motorTimeout,
     //         cellVMax,cellVMin,tempH,tempL,sysState,packV,current,soc,
     //         bmsValid,tsMs,spdX10
@@ -29,15 +31,14 @@ void Telemetry::sendStatus(const TelemetryData& TEL_data) {
     // adlandırılır ama burada TEL_motorVoltageDeciV (motor voltajı, deciV)
     // yazılır — semantik uyumsuzluk bilerek kayıt altına alındı, bkz.
     // Telemetry.h::sendStatus yorumu ve Documents/TORQUE_ALAN_KARAR_NOTU.md.
-    // Çağıran taraf bu değeri sendStatus'a geçmeden önce
-    // TelemetrySanitize::sanitizeForUplink() ile 32767'ye kırpar; sendStatus
-    // burada AYRICA kırpma YAPMAZ (tek ortak sanitize kapısına güvenir).
-    char TEL_payload[192];
-    const int TEL_payloadLength = snprintf(
-        TEL_payload, sizeof(TEL_payload),
+    // Çağıran taraf bu değeri formatlamadan önce
+    // TelemetrySanitize::sanitizeForUplink() ile 32767'ye kırpar; burada
+    // AYRICA kırpma YAPILMAZ (tek ortak sanitize kapısına güvenilir).
+    return snprintf(
+        TEL_buf, TEL_bufLen,
         "TEL,%d,%lu,%d,%u,%u,%u,%u,%u,%u,%d,%d,%u,%u,%ld,%u,%u,%lu,%u\r\n",
         LORA_PROTOCOL_VERSION,
-        static_cast<unsigned long>(TEL_sequenceCounter),
+        static_cast<unsigned long>(TEL_seq),
         static_cast<int>(TEL_data.TEL_motorRpm),
         static_cast<unsigned>(TEL_data.TEL_motorVoltageDeciV),
         TEL_data.TEL_motorErrorFlags,
@@ -54,6 +55,16 @@ void Telemetry::sendStatus(const TelemetryData& TEL_data) {
         TEL_data.TEL_bmsDataValid ? 1u : 0u,
         static_cast<unsigned long>(TEL_data.TEL_timestampMs),
         TEL_data.TEL_speedKmhX10);
+}
+
+void Telemetry::sendStatus(const TelemetryData& TEL_data) {
+    if (!TEL_isInitialized)
+        return;
+
+    // Alan sirasi/birimleri ve 4. alan notu: bkz. formatFrame.
+    char TEL_payload[192];
+    const int TEL_payloadLength = formatFrame(TEL_data, TEL_sequenceCounter,
+                                              TEL_payload, sizeof(TEL_payload));
 
     if (TEL_payloadLength <= 0)
         return;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 #include "VehicleData.h"    // TelemetryData (saf veri sözleşmesi — M3)
@@ -88,6 +89,13 @@ class Telemetry {
     // hicbir CAN ID'den parse edilmiyor — sanitizeSystemState(0) onu 2'ye
     // (IDLE) cevirdigi icin UKS ekraninda BMS surekli IDLE gorunur (AKS-17).
     void sendStatus(const TelemetryData& TEL_data);
+
+    // sendStatus'un kullandigi saf satir formatlayicisi (UART'a yazmaz, seq
+    // sayacina dokunmaz). Wi-Fi test yolu (WIFI_TELEMETRY_ENABLED) kendi seq
+    // sayaciyla AYNI 19 alanli satiri buradan uretir. Donus: snprintf
+    // semantigi (>= TEL_bufLen → kesik, kullanma).
+    static int formatFrame(const TelemetryData& TEL_data, uint32_t TEL_seq,
+                           char* TEL_buf, size_t TEL_bufLen);
 
    private:
     bool TEL_isInitialized;

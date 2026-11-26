@@ -46,3 +46,6 @@
 
 
 __pycache__/
+
+# Wi-Fi test telemetri yolu: hotspot / HiveMQ sifreleri yerel kalir
+ESP_AKS/include/WifiSecrets.h
