@@ -730,6 +730,11 @@ static_assert(
 #ifndef WIFI_TELEMETRY_ENABLED
 #define WIFI_TELEMETRY_ENABLED 0
 #endif
+// ESP32-S3 test kartı build'i ([env:esp32s3_wifitest]): araç firmware'i
+// yerine s3_wifitest_main.cpp + SAHTE veri (TelSimulator). Araç build'lerinde 0.
+#ifndef AKS_S3_WIFITEST
+#define AKS_S3_WIFITEST 0
+#endif
 // Öncelik: HER ŞEYİN altında (HMI=2'den de düşük). Task core 1'e sabitlenir;
 // Wi-Fi sürücüsü / lwIP / MQTT task'ları da sdkconfig.esp32dev_wifi'de core
 // 1'e alındı → core 0'daki CAN/LoRa/HMI'yi preempt etmezler.

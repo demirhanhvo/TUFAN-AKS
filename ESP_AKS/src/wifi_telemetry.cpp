@@ -97,12 +97,13 @@ int formatStatusJson(char* out, size_t len, bool online) {
     return snprintf(out, len,
                     "{\"online\":%s,\"fw\":\"%s\",\"ip\":\"%s\",\"rssi\":%d,"
                     "\"mqtt\":%s,\"lastSeq\":%lu,\"lines\":%u,\"uptimeMs\":%lu,"
-                    "\"mqttDrops\":%lu,\"test\":true}",
+                    "\"mqttDrops\":%lu,\"test\":true,\"sim\":%s}",
                     online ? "true" : "false", FW_VERSION, ip, currentRssi(),
                     s_mqttUp.load() ? "true" : "false",
                     (unsigned long)s_lastSeq.load(), (unsigned)lines,
                     (unsigned long)(esp_timer_get_time() / 1000LL),
-                    (unsigned long)s_mqttDropCount.load());
+                    (unsigned long)s_mqttDropCount.load(),
+                    AKS_S3_WIFITEST ? "true" : "false");
 }
 
 // ---------------------------------------------------------------------------

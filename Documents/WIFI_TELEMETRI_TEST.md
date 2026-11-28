@@ -33,13 +33,62 @@ WiFi_Task (5 Hz): SysStateDerive + sanitize (LoRa ile aynı)
   tek-app bölümü (`partitions_singleapp_large.csv`) kullanır. Normal firmware'i
   geri yüklemek tabloyu da geri yazar.
 
+## ESP32-S3 test kartı (`esp32s3_wifitest`)
+
+Wi-Fi testleri araç anakartı yerine bir **ESP32-S3 geliştirme kartında**
+(DevKitC-1 vb.) yapılır. S3 build'i araç firmware'i **değildir**:
+
+| | Araç (`esp32dev`, `esp32dev_wifi`) | Test kartı (`esp32s3_wifitest`) |
+|---|---|---|
+| Çip | ESP32 (Xtensa LX6, 2 çekirdek) | ESP32-S3 (Xtensa LX7, 2 çekirdek) |
+| Giriş noktası | `src/main.cpp` | `src/s3_wifitest_main.cpp` (`main.cpp` derlenmez — `src/CMakeLists.txt`) |
+| Veri kaynağı | CAN_Task (BMS + motor, TJA1050) | `Sim_Task` → `TelSimulator` (**sahte** veri) |
+| Wi-Fi yolu | `wifi_telemetry.cpp` | **aynı dosya** (formatFrame, ring, HTTP, MQTT) |
+| LoRa / Nextion / röle | var | yok |
+
+Neden ayrı giriş noktası: S3'te ESP32'nin GPIO 22–25'i hiç yoktur, 26–32
+dahili flash'a ayrılmıştır (çoğu modülde 33–37 de PSRAM'e). AKS pinleri
+(LoRa M0=IO25, M1=IO26, Nextion IO32/33, röle SPI IO23...) S3'te
+derlenmez/çalışmaz. S3'e hiçbir kablo bağlanmaz; yalnız USB.
+
+Sahte veri (`lib/WifiTelemetry/TelSimulator.h`, testi
+`test/test_native_wifi_sim`): 120 sn'lik döngü — bekleme (0 km/h,
+−0,3 A) → hızlanma (0→45 km/h, −55 A'e kadar) → seyir (40–50 km/h,
+−12..−20 A) → rejeneratif fren (+8 A) → bekleme. 24S LFP paket (76,8 V
+nominal, 100 Ah): SoC akımın integraliyle düşer, gerilim SoC'ye ve yük
+altındaki çökmeye göre değişir, sıcaklık yükle ısınır. Tüm değerler
+UKS'in `Decode_Line` aralık kontrollerinden geçer (testle doğrulanır).
+`sysState` araçtaki gibi akımdan türetilir. Durum JSON'unda `"sim":true`
+yazar; PC sayfası "SAHTE VERİ (S3 simülatör)" gösterir.
+
+Kurulum: `include/WifiSecrets.h` aynı dosyadır. Yükleme:
+`LC_ALL=C.UTF-8 pio run -e esp32s3_wifitest --target upload` — kartın
+**"UART"/"COM"** yazan USB portunu kullanın (seri log oradan gelir).
+Flash 4 MB varsayılır, daha büyük flash'lı kartlarda da çalışır. Gerçek CAN
+verisiyle test istenirse S3'e bir 3,3 V CAN transceiver (ör. SN65HVD230)
+bağlanıp S3'te var olan pinler seçilmelidir — bu yapılmadı.
+
+## PC tarafı: kayıt ve arayüz
+
+```
+HiveMQ ──> logger.py (TUFAN-UKS-TELEMETRY/pc/wifi-telemetri)
+             ├─ logs/wifi_*.csv          kalıcı kayıt
+             └─ http://<pc>:8080         kayıtlı verinin web adresi
+                  ├─ /                   canlı sayfa (geçmiş + canlı)
+                  └─ /api/lines?since=   ──> TUFAN-monitor --port WIFI (UKS arayüzü)
+```
+
+Ayrıntı: `TUFAN-UKS-TELEMETRY/pc/wifi-telemetri/README.md` ve
+TUFAN-monitor README "Wi-Fi TEST kaynağı". Monitor bu kaynakla yazdığı
+dosyalara `_WIFI` ekler; jüri kaydıyla karışmaz.
+
 ## HTTP uç noktaları (ESP32 ile aynı ağdayken)
 
 | İstek | Yanıt |
 |---|---|
 | `GET /telemetry.csv` | son 20 satır |
 | `GET /telemetry.csv?since=N` | seq > N olan satırlar; ESP32 yeniden başladıysa (N > en yeni) tüm tampon |
-| `GET /status` | JSON: ip, rssi, mqtt, lastSeq, uptimeMs, mqttDrops |
+| `GET /status` | JSON: ip, rssi, mqtt, lastSeq, uptimeMs, mqttDrops, sim |
 | `GET /` | kısa açıklama |
 
 CORS açıktır (`Access-Control-Allow-Origin: *`); kimlik doğrulama **yoktur**.
@@ -67,8 +116,10 @@ Hotspot'a bağlanan herkes okuyabilir.
    LC_ALL=C.UTF-8 pio device monitor
    ```
    Seri logda `Hotspot'a baglandi — IP ...` ve `MQTT broker'a baglandi` görülmeli.
-3. PC: `TUFAN-UKS-TELEMETRY/pc/wifi-telemetri/index.html` dosyasını tarayıcıda aç
-   (bkz. oradaki README).
+   (Test kartı için `-e esp32s3_wifitest`; bkz. yukarıdaki S3 bölümü.)
+3. PC: `TUFAN-UKS-TELEMETRY/pc/wifi-telemetri` içinde `python logger.py`
+   → tarayıcıda `http://localhost:8080`; UKS arayüzü için
+   `python monitor.py --port WIFI` (bkz. oradaki README).
 4. Bitince normal firmware'e dön: `LC_ALL=C.UTF-8 pio run -e esp32dev --target upload`
 
 ## Ayarlar (`include/SystemConfig.h`)
@@ -78,6 +129,9 @@ Hotspot'a bağlanan herkes okuyabilir.
 `WIFI_TEL_MAX_TX_POWER_QDBM` (52 = 13 dBm), `TASK_PRIORITY_WIFI` (1).
 
 ## Bilinen riskler / doğrulanmadı
+
+- `esp32s3_wifitest` build'i derleniyor (RAM 56,5 KB / 320 KB, Flash
+  991 KB / 1,5 MB) ama **kart üstünde çalıştırılmadı**.
 
 - Wi-Fi TX akım tepeleri (~250–400 mA) AKS beslemesinde **brownout**
   yaratabilir. TX gücü 13 dBm'e kısıldı; boot logundaki `RESET SEBEBI`
